@@ -395,19 +395,44 @@ export function CampaignCanvas({ initialNodes = [], initialEdges = [] }: Campaig
     setExecutionProgress({ completed: 0, total: nodes.length });
 
     try {
-      // Convert ReactFlow edges to workflow connections format
-      const connections = convertEdgesToConnections(nodes, edges);
-      console.log('🔗 Converted connections:', connections);
-
-      // Execute workflow
-      const results = await WorkflowExecutionService.executeWorkflow(
-        nodes.map(node => ({
+      // Get the latest module data from the store before execution
+      const modules = useCampaignStore.getState().modules;
+      
+      // Sync latest inputs from store to nodes
+      const nodesWithLatestInputs = nodes.map(node => {
+        const moduleData = modules[node.id];
+        if (moduleData && typeof moduleData === 'object' && 'inputs' in moduleData) {
+          console.log(`� Syncing latest inputs for node ${node.id}:`, (moduleData as {inputs: Record<string, unknown>}).inputs);
+          return {
+            id: node.id,
+            data: {
+              module_name: node.data.module_name as string,
+              inputs: (moduleData as {inputs: Record<string, unknown>}).inputs
+            }
+          };
+        }
+        return {
           id: node.id,
           data: {
             module_name: node.data.module_name as string,
             inputs: node.data.inputs as Record<string, unknown>
           }
-        })),
+        };
+      });
+      
+      console.log('📋 Nodes with latest inputs:', nodesWithLatestInputs.map(n => ({
+        id: n.id,
+        module: n.data.module_name,
+        inputs: n.data.inputs
+      })));
+      
+      // Convert ReactFlow edges to workflow connections format
+      const connections = convertEdgesToConnections(nodes, edges);
+      console.log('🔗 Converted connections:', connections);
+
+      // Execute workflow with latest inputs
+      const results = await WorkflowExecutionService.executeWorkflow(
+        nodesWithLatestInputs,
         connections,
         (nodeId, result) => {
           // On node completion

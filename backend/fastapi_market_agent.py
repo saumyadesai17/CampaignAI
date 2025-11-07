@@ -1802,14 +1802,39 @@ async def send_email_campaign_endpoint(request: EmailCampaignRequest):
         print(f"📝 Campaign: {request.campaign_description}")
         print(f"👥 Recipients: {len(request.recipients)}")
         
+        # Validate recipients
+        if not request.recipients or len(request.recipients) == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="No recipients provided. Please include at least one recipient in the request."
+            )
+        
         # Use the standalone email sender service
         result = send_email_campaign(request)
         
         print(f"✅ Email campaign completed: {result.campaign_summary['successful_sends']}/{result.campaign_summary['total_recipients']} emails sent successfully")
         return result
         
+    except ValueError as ve:
+        # Configuration errors (missing env variables, etc.)
+        error_detail = str(ve)
+        print(f"❌ Configuration error: {error_detail}")
+        raise HTTPException(status_code=400, detail=error_detail)
+        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error sending email campaign: {str(e)}")
+        # General errors
+        error_detail = str(e)
+        print(f"❌ Email campaign error: {error_detail}")
+        
+        # Return more detailed error information
+        import traceback
+        traceback_str = traceback.format_exc()
+        print(f"Traceback:\n{traceback_str}")
+        
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error sending email campaign: {error_detail}"
+        )
 
 if __name__ == "__main__":
     import uvicorn

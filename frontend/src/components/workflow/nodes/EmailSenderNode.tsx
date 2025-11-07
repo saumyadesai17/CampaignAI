@@ -1,7 +1,7 @@
 "use client";
 
 import React, { memo, useState } from "react";
-import { Handle, Position, NodeProps } from "@xyflow/react";
+import { Handle, Position, NodeProps, useReactFlow } from "@xyflow/react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -52,6 +52,7 @@ interface EmailFormData {
 
 const EmailSenderNodeComponent = ({ id, data }: EmailSenderNodeProps) => {
   const { selectedNodeId, updateModule, connectionPreview, executionResults, setExecutionResult } = useCampaignStore();
+  const { setNodes } = useReactFlow();
   const [isExpanded, setIsExpanded] = useState(false);
   const [inputs, setInputs] = useState(data.inputs || {});
   const [isExecuting, setIsExecuting] = useState(false);
@@ -73,7 +74,27 @@ const EmailSenderNodeComponent = ({ id, data }: EmailSenderNodeProps) => {
   const updateInput = (key: string, value: unknown) => {
     const newInputs = { ...inputs, [key]: value };
     setInputs(newInputs);
+    
+    // Update both the store AND the ReactFlow nodes
     updateModule(id, { ...data, inputs: newInputs });
+    
+    // Update the node in ReactFlow so it has the latest data
+    setNodes((nds) =>
+      nds.map((node) => {
+        if (node.id === id) {
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              inputs: newInputs,
+            },
+          };
+        }
+        return node;
+      })
+    );
+    
+    console.log(`📝 Updated ${key} for node ${id}:`, value);
   };
 
   const updateFormData = (key: keyof EmailFormData, value: string | EmailRecipient[]) => {

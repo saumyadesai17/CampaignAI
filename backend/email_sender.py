@@ -84,19 +84,56 @@ def send_email_campaign(request: EmailCampaignRequest) -> EmailCampaignResponse:
     print(f"📝 Campaign: {request.campaign_description}")
     print(f"👥 Recipients: {len(request.recipients)}")
     
-    # Initialize Groq client
-    groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+    # Check if recipients list is empty
+    if not request.recipients or len(request.recipients) == 0:
+        print("⚠️ No recipients provided. Returning empty campaign response.")
+        return EmailCampaignResponse(
+            campaign_summary={
+                "company_name": request.company_name,
+                "campaign_description": request.campaign_description,
+                "total_recipients": 0,
+                "successful_sends": 0,
+                "failed_sends": 0,
+                "success_rate": 0,
+                "sender_name": request.sender_name or request.company_name,
+                "sender_email": "N/A",
+                "warning": "No recipients provided"
+            },
+            delivery_results=[],
+            execution_status="failed",
+            timestamp=datetime.now()
+        )
     
-    # Get email credentials
+    # Get email credentials with detailed logging
     sender_email = os.getenv("SENDER_EMAIL")
     sender_password = os.getenv("SENDER_PASSWORD")
+    groq_api_key = os.getenv("GROQ_API_KEY")
     sender_name = request.sender_name or os.getenv("SENDER_NAME", request.company_name)
     
-    if not sender_email or not sender_password:
-        raise ValueError("❌ Missing SENDER_EMAIL or SENDER_PASSWORD in environment variables. Please set these to send emails.")
+    print(f"🔍 Environment check:")
+    print(f"   SENDER_EMAIL: {'✓ Set' if sender_email else '✗ Missing'}")
+    print(f"   SENDER_PASSWORD: {'✓ Set' if sender_password else '✗ Missing'}")
+    print(f"   GROQ_API_KEY: {'✓ Set' if groq_api_key else '✗ Missing'}")
+    print(f"   SENDER_NAME: {sender_name}")
     
-    if not os.getenv("GROQ_API_KEY"):
-        raise ValueError("❌ Missing GROQ_API_KEY in environment variables. Please set this to generate email content.")
+    if not sender_email or not sender_password:
+        error_msg = "❌ Missing SENDER_EMAIL or SENDER_PASSWORD in environment variables. Please set these to send emails."
+        print(error_msg)
+        raise ValueError(error_msg)
+    
+    if not groq_api_key:
+        error_msg = "❌ Missing GROQ_API_KEY in environment variables. Please set this to generate email content."
+        print(error_msg)
+        raise ValueError(error_msg)
+    
+    # Initialize Groq client
+    try:
+        groq_client = Groq(api_key=groq_api_key)
+        print("✅ Groq client initialized successfully")
+    except Exception as e:
+        error_msg = f"❌ Failed to initialize Groq client: {str(e)}"
+        print(error_msg)
+        raise ValueError(error_msg)
     
     # Track delivery results
     delivery_results = []
@@ -104,13 +141,31 @@ def send_email_campaign(request: EmailCampaignRequest) -> EmailCampaignResponse:
     failed_sends = 0
     
     # Send emails using SMTP
+    print(f"📬 Connecting to Gmail SMTP server...")
     try:
-        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=30) as server:
+            print("🔐 Starting TLS encryption...")
             server.starttls()
-            server.login(sender_email, sender_password)
+            
+            print(f"🔑 Logging in as {sender_email}...")
+            try:
+                server.login(sender_email, sender_password)
+                print("✅ SMTP login successful!")
+            except smtplib.SMTPAuthenticationError as auth_error:
+                error_msg = f"❌ SMTP Authentication failed: {str(auth_error)}\n"
+                error_msg += "   Make sure you're using a Gmail App Password, not your regular password.\n"
+                error_msg += "   Create one at: https://myaccount.google.com/apppasswords"
+                print(error_msg)
+                raise ValueError(error_msg)
+            except Exception as login_error:
+                error_msg = f"❌ SMTP login error: {str(login_error)}"
+                print(error_msg)
+                raise ValueError(error_msg)
             
             for recipient in request.recipients:
                 try:
+                    print(f"📧 Generating email for {recipient.name}...")
+                    
                     # Generate personalized email content using Groq
                     prompt = f"""
                     You are an expert advertising copywriter for {request.company_name}.
@@ -130,12 +185,17 @@ def send_email_campaign(request: EmailCampaignRequest) -> EmailCampaignResponse:
                     - End with a warm closing from {request.company_name}.
                     """
                     
-                    response = groq_client.chat.completions.create(
-                        model="llama-3.1-8b-instant",
-                        messages=[{"role": "user", "content": prompt}]
-                    )
-                    
-                    email_content = response.choices[0].message.content.strip()
+                    try:
+                        response = groq_client.chat.completions.create(
+                            model="llama-3.1-8b-instant",
+                            messages=[{"role": "user", "content": prompt}]
+                        )
+                        email_content = response.choices[0].message.content.strip()
+                        print(f"✅ Email content generated ({len(email_content)} chars)")
+                    except Exception as groq_error:
+                        error_msg = f"❌ Groq API error: {str(groq_error)}"
+                        print(error_msg)
+                        raise Exception(error_msg)
                     
                     # Create email message
                     msg = MIMEText(email_content, "plain")
@@ -144,7 +204,14 @@ def send_email_campaign(request: EmailCampaignRequest) -> EmailCampaignResponse:
                     msg["To"] = recipient.email
                     
                     # Send email
-                    server.send_message(msg)
+                    print(f"📤 Sending email to {recipient.email}...")
+                    try:
+                        server.send_message(msg)
+                        print(f"✅ Email sent successfully to {recipient.name}")
+                    except Exception as send_error:
+                        error_msg = f"❌ Failed to send via SMTP: {str(send_error)}"
+                        print(error_msg)
+                        raise Exception(error_msg)
                     
                     # Track successful delivery
                     delivery_results.append(EmailDeliveryStatus(
@@ -156,24 +223,27 @@ def send_email_campaign(request: EmailCampaignRequest) -> EmailCampaignResponse:
                     ))
                     
                     successful_sends += 1
-                    print(f"✅ Sent email to {recipient.name} ({recipient.email})")
                     
                 except Exception as e:
                     # Track failed delivery
+                    error_detail = str(e)
+                    print(f"❌ Failed to send email to {recipient.name} ({recipient.email}): {error_detail}")
+                    
                     delivery_results.append(EmailDeliveryStatus(
                         recipient_name=recipient.name,
                         recipient_email=recipient.email,
                         status="failed",
-                        error_message=str(e),
+                        error_message=error_detail,
                         email_content=None
                     ))
                     
                     failed_sends += 1
-                    print(f"❌ Failed to send email to {recipient.name} ({recipient.email}): {e}")
                     continue
     
     except Exception as e:
-        raise Exception(f"SMTP connection error: {str(e)}")
+        error_msg = f"SMTP connection error: {str(e)}"
+        print(f"❌ {error_msg}")
+        raise Exception(error_msg)
     
     # Determine execution status
     if successful_sends == len(request.recipients):
