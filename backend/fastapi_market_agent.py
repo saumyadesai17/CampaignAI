@@ -51,9 +51,17 @@ from email_sender import (
     EmailCampaignRequest,
     EmailCampaignResponse,
     EmailRecipient,
-    EmailDeliveryStatus,
     send_email_campaign
 )
+
+# Try to import SendGrid version if available
+try:
+    from email_sender_sendgrid import send_email_campaign_sendgrid
+    SENDGRID_AVAILABLE = True
+    print("✅ SendGrid email sender available")
+except ImportError:
+    SENDGRID_AVAILABLE = False
+    print("⚠️ SendGrid not installed, using SMTP fallback")
 
 # Load environment variables
 load_dotenv()
@@ -1782,20 +1790,20 @@ async def send_email_campaign_endpoint(request: EmailCampaignRequest):
     - Delivery status tracking for each email
     - Comprehensive campaign summary and results
     
-    This endpoint uses the standalone email_sender service for reliable email delivery.
+    This endpoint can use either:
+    1. SendGrid API (recommended for cloud deployments) - set SENDGRID_API_KEY
+    2. Gmail SMTP (fallback) - set SENDER_EMAIL and SENDER_PASSWORD
     
     Requirements:
-    - GROQ_API_KEY environment variable must be set
-    - SENDER_EMAIL environment variable must be set
-    - SENDER_PASSWORD environment variable must be set (Gmail app password recommended)
-    - SENDER_NAME environment variable (optional, defaults to company name)
+    Option 1 - SendGrid (Recommended for Render):
+    - SENDGRID_API_KEY environment variable
+    - SENDER_EMAIL environment variable (verified in SendGrid)
+    - GROQ_API_KEY environment variable
     
-    The AI generates unique, personalized content for each recipient based on:
-    - Company name and campaign description
-    - Recipient's personal interests and preferences
-    - Conversational and emotionally engaging tone
-    - Under 100 words per email
-    - Personalized benefits and offers
+    Option 2 - Gmail SMTP (Fallback):
+    - SENDER_EMAIL environment variable
+    - SENDER_PASSWORD environment variable (Gmail app password)
+    - GROQ_API_KEY environment variable
     """
     try:
         print(f"📧 Starting email campaign for {request.company_name}")
@@ -1809,8 +1817,19 @@ async def send_email_campaign_endpoint(request: EmailCampaignRequest):
                 detail="No recipients provided. Please include at least one recipient in the request."
             )
         
-        # Use the standalone email sender service
-        result = send_email_campaign(request)
+        # Check if SendGrid is available and configured
+        sendgrid_api_key = os.getenv("SENDGRID_API_KEY")
+        
+        if SENDGRID_AVAILABLE and sendgrid_api_key:
+            # Use SendGrid API (better for cloud platforms)
+            print("📬 Using SendGrid API for email delivery")
+            result = send_email_campaign_sendgrid(request)
+        else:
+            # Fall back to SMTP
+            if not sendgrid_api_key:
+                print("⚠️ SENDGRID_API_KEY not set, falling back to SMTP")
+            print("📬 Using Gmail SMTP for email delivery")
+            result = send_email_campaign(request)
         
         print(f"✅ Email campaign completed: {result.campaign_summary['successful_sends']}/{result.campaign_summary['total_recipients']} emails sent successfully")
         return result
